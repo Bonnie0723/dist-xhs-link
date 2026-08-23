@@ -494,7 +494,7 @@
   <script>
     // ========== 配置 ==========
     const ALLOWED_DOMAINS = ['xhslink.com', 'xiaohongshu.com', 'www.xiaohongshu.com'];
-    const PROXY_URL = 'https://corsproxy.io/?';
+    const PROXY_URL = 'https://corsproxy.io/?url=';
     const TIMEOUT_MS = 8000;
 
     // ========== 正则表达式 ==========
@@ -558,6 +558,10 @@
         const response = await fetch(proxyUrl, { method: 'GET', signal: controller.signal, redirect: 'follow' });
         clearTimeout(timeoutId);
         if (response.ok) {
+          // CorsProxy exposes the real destination after redirects in this header.
+          const finalUrl = response.headers.get('x-final-url');
+          if (isValidXhsContentUrl(finalUrl)) return { success: true, url: finalUrl };
+
           const text = await response.text();
           const resolved = parseRedirectFromHtml(text);
           if (resolved) return { success: true, url: resolved };
@@ -570,16 +574,49 @@
       }
     }
 
+    function isValidXhsContentUrl(value) {
+      if (!value) return false;
+      try {
+        const url = new URL(value.replace(/\\u002F/gi, '/').replace(/\\\//g, '/'));
+        const host = url.hostname.toLowerCase();
+        if (host !== 'xiaohongshu.com' && !host.endsWith('.xiaohongshu.com')) return false;
+
+        const path = url.pathname.toLowerCase();
+        // Only accept actual note pages; reject favicon.ico, images, scripts and other assets.
+        return /^\\/(explore|discovery\\/item)\\/[a-z0-9]+/.test(path);
+      } catch {
+        return false;
+      }
+    }
+
     function parseRedirectFromHtml(html) {
-      const metaRefreshMatch = html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
-      if (metaRefreshMatch) return metaRefreshMatch[1];
-      const jsRedirectMatch = html.match(/window\.location\.(?:href|replace)\s*=\s*["']([^"']+)["']/i);
-      if (jsRedirectMatch) return jsRedirectMatch[1];
-      const linkMatch = html.match(/href=["'](https?:\/\/[^"']*xiaohongshu\.com\/[^"']+)["']/i);
-      if (linkMatch) return linkMatch[1];
-      const textLinkMatch = html.match(/(https?:\/\/[^\s"'<>]+xiaohongshu\.com\/[^\s"'<>]+)/i);
-      if (textLinkMatch) return textLinkMatch[1];
-      return null;
+      const decodedHtml = html
+        .replace(/&amp;/g, '&')
+        .replace(/\\u002F/gi, '/')
+        .replace(/\\\//g, '/');
+
+      const candidates = [];
+
+      // Prefer explicit canonical metadata.
+      const metaPatterns = [
+        /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/gi,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:url["']/gi,
+        /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/gi,
+        /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/gi,
+        /<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\\d+;\\s*url=([^"'>\\s]+)/gi,
+        /window\\.location\\.(?:href|replace)\\s*=\\s*["']([^"']+)["']/gi
+      ];
+
+      for (const pattern of metaPatterns) {
+        let match;
+        while ((match = pattern.exec(decodedHtml)) !== null) candidates.push(match[1]);
+      }
+
+      // Fall back to URLs embedded in page state, but only real note paths.
+      const embedded = decodedHtml.match(/https?:\\/\\/(?:www\\.)?xiaohongshu\\.com\\/(?:explore|discovery\\/item)\\/[a-zA-Z0-9]+[^\\s"'<>]*/gi) || [];
+      candidates.push(...embedded);
+
+      return candidates.find(isValidXhsContentUrl) || null;
     }
 
     async function convertLink() {

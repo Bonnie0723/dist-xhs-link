@@ -720,9 +720,8 @@
 
     function openResult() {
       if (currentUrls.length === 0) return;
-      currentUrls.forEach((url, index) => {
-        setTimeout(() => window.open(url, '_blank', 'noopener,noreferrer'), index * 150);
-      });
+      // Navigate in the current tab so mobile and in-app browsers cannot block it as a popup.
+      window.location.assign(currentUrls[0]);
     }
 
     function clearAll() {

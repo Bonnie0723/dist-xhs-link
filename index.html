@@ -243,6 +243,7 @@
       font-size: 14px;
       color: var(--text);
       word-break: break-all;
+      white-space: pre-wrap;
       line-height: 1.6;
       padding: 12px;
       background: var(--bg);
@@ -446,7 +447,7 @@
       </div>
       <button class="convert-btn" id="convertBtn" onclick="convertLink()">
         <span class="spinner"></span>
-        <span class="btn-text">转换链接</span>
+        <span class="btn-text">批量转换链接</span>
       </button>
     </section>
 
@@ -467,7 +468,7 @@
 
     <section class="result-section" id="resultSection">
       <div class="result-card">
-        <div class="result-label">转换后的标准链接</div>
+        <div class="result-label">转换后的标准链接（每行一条）</div>
         <div class="result-url" id="resultUrl"></div>
         <div class="result-actions">
           <button class="action-btn primary" id="copyBtn" onclick="copyResult()">
@@ -513,18 +514,18 @@
     const successText = document.getElementById('successText');
     const toast = document.getElementById('toast');
 
-    let currentUrl = '';
-    let isShortLink = false;
+    let currentUrls = [];
 
     // ========== 核心功能 ==========
 
-    function extractLink(text) {
-      if (!text || !text.trim()) return null;
-      const matches = text.match(LINK_REGEX);
-      if (!matches || matches.length === 0) return null;
-      let url = matches[0].trim();
-      if (!url.startsWith('http')) url = 'https://' + url;
-      return url;
+    function extractLinks(text) {
+      if (!text || !text.trim()) return [];
+      const matches = text.match(LINK_REGEX) || [];
+      const urls = matches.map(match => {
+        const url = match.trim();
+        return url.startsWith('http') ? url : 'https://' + url;
+      });
+      return [...new Set(urls)];
     }
 
     function isShortLinkUrl(url) {
@@ -585,31 +586,29 @@
       hideAlerts();
       const text = input.value.trim();
       if (!text) { showError('请输入小红书分享文案或链接'); input.focus(); return; }
-      const rawUrl = extractLink(text);
-      if (!rawUrl) { showError('未能识别到有效的小红书链接，请检查输入内容'); return; }
+
+      const rawUrls = extractLinks(text);
+      if (rawUrls.length === 0) { showError('未能识别到有效的小红书链接，请检查输入内容'); return; }
+
       setLoading(true);
-      currentUrl = '';
-      isShortLink = false;
+      currentUrls = [];
+      showToast(`发现 ${rawUrls.length} 条链接，正在转换...`);
+
       try {
-        if (isShortLinkUrl(rawUrl)) {
-          isShortLink = true;
-          showToast('正在解析短链接，请稍候...');
+        const results = await Promise.all(rawUrls.map(async rawUrl => {
+          if (!isShortLinkUrl(rawUrl)) return cleanXiaohongshuUrl(rawUrl);
           const result = await resolveShortLink(rawUrl);
-          if (result.success) {
-            currentUrl = cleanXiaohongshuUrl(result.url);
-            showResult(currentUrl);
-            showSuccess('短链接解析成功，已转换为标准链接');
-          } else {
-            currentUrl = rawUrl;
-            showResult(currentUrl);
-            if (result.reason === 'timeout') showWarning('短链接解析超时，已显示原始短链接。点击"打开链接"浏览器会自动跳转。');
-            else if (result.reason === 'network_error') showWarning('网络受限，无法解析短链接。已显示原始短链接，点击"打开链接"即可访问。');
-            else showWarning('短链接解析失败，已显示原始链接。点击"打开链接"浏览器会自动跳转到目标页面。');
-          }
+          return result.success ? cleanXiaohongshuUrl(result.url) : rawUrl;
+        }));
+
+        currentUrls = [...new Set(results)];
+        showResult(currentUrls);
+
+        const failedCount = currentUrls.filter(isShortLinkUrl).length;
+        if (failedCount > 0) {
+          showWarning(`已转换 ${currentUrls.length} 条链接，其中 ${failedCount} 条短链接因网络限制保留原链接。`);
         } else {
-          currentUrl = cleanXiaohongshuUrl(rawUrl);
-          showResult(currentUrl);
-          showSuccess('链接已清理完成');
+          showSuccess(`转换完成，共 ${currentUrls.length} 条链接`);
         }
       } catch (error) {
         console.error('Convert error:', error);
@@ -619,14 +618,14 @@
       }
     }
 
-    function showResult(url) {
-      resultUrl.textContent = url;
+    function showResult(urls) {
+      resultUrl.textContent = urls.join('\n');
       resultSection.classList.add('show');
     }
 
     function hideResult() {
       resultSection.classList.remove('show');
-      currentUrl = '';
+      currentUrls = [];
     }
 
     function showError(message) { errorText.textContent = message; errorAlert.classList.add('show'); }
@@ -642,7 +641,7 @@
     function setLoading(loading) {
       convertBtn.disabled = loading;
       convertBtn.classList.toggle('loading', loading);
-      convertBtn.querySelector('.btn-text').textContent = loading ? '转换中...' : '转换链接';
+      convertBtn.querySelector('.btn-text').textContent = loading ? '转换中...' : '批量转换链接';
     }
 
     function showToast(message) {
@@ -664,13 +663,14 @@
     }
 
     async function copyResult() {
-      if (!currentUrl) return;
+      if (currentUrls.length === 0) return;
+      const output = currentUrls.join('\n');
       try {
-        await navigator.clipboard.writeText(currentUrl);
-        showToast('链接已复制到剪贴板');
+        await navigator.clipboard.writeText(output);
+        showToast(`已复制 ${currentUrls.length} 条链接`);
       } catch {
         const textarea = document.createElement('textarea');
-        textarea.value = currentUrl;
+        textarea.value = output;
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
         document.body.appendChild(textarea);
@@ -682,15 +682,17 @@
     }
 
     function openResult() {
-      if (!currentUrl) return;
-      window.open(currentUrl, '_blank', 'noopener,noreferrer');
+      if (currentUrls.length === 0) return;
+      currentUrls.forEach((url, index) => {
+        setTimeout(() => window.open(url, '_blank', 'noopener,noreferrer'), index * 150);
+      });
     }
 
     function clearAll() {
       input.value = '';
       hideResult();
       hideAlerts();
-      currentUrl = '';
+      currentUrls = [];
       input.focus();
     }
 

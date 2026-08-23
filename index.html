@@ -475,10 +475,10 @@
             <svg class="icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             复制链接
           </button>
-          <button class="action-btn secondary" id="openBtn" onclick="openResult()">
+          <a class="action-btn secondary" id="openBtn" href="#" target="_self">
             <svg class="icon" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
             打开链接
-          </button>
+          </a>
         </div>
       </div>
       <button class="clear-btn show" id="clearBtn" onclick="clearAll()">清空重输</button>
@@ -656,7 +656,19 @@
     }
 
     function showResult(urls) {
-      resultUrl.textContent = urls.join('\n');
+      resultUrl.replaceChildren();
+      urls.forEach((url, index) => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_self';
+        link.rel = 'noopener noreferrer';
+        link.textContent = url;
+        link.style.display = 'block';
+        link.style.color = 'inherit';
+        link.style.marginBottom = index < urls.length - 1 ? '10px' : '0';
+        resultUrl.appendChild(link);
+      });
+      document.getElementById('openBtn').href = urls[0];
       resultSection.classList.add('show');
     }
 
@@ -716,12 +728,6 @@
         document.body.removeChild(textarea);
         showToast('链接已复制到剪贴板');
       }
-    }
-
-    function openResult() {
-      if (currentUrls.length === 0) return;
-      // Navigate in the current tab so mobile and in-app browsers cannot block it as a popup.
-      window.location.assign(currentUrls[0]);
     }
 
     function clearAll() {

@@ -623,13 +623,15 @@
     function isValidXhsContentUrl(value) {
       if (!value) return false;
       try {
-        const url = new URL(value.replace(/\\u002F/gi, '/').replace(/\\\//g, '/'));
+        const normalized = value.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+        const url = new URL(normalized);
         const host = url.hostname.toLowerCase();
         if (host !== 'xiaohongshu.com' && !host.endsWith('.xiaohongshu.com')) return false;
 
         const path = url.pathname.toLowerCase();
-        // Only accept actual note pages; reject favicon.ico, images, scripts and other assets.
-        return /^\\/(explore|discovery\\/item)\\/[a-z0-9]+/.test(path);
+        // Accept real note pages only; reject favicon, images, scripts and other assets.
+        return /^\/(?:explore|discovery\/item)\/[a-z0-9]+/.test(path) ||
+          /^\/user\/profile\/[a-z0-9]+\/[a-z0-9]+/.test(path);
       } catch {
         return false;
       }
@@ -642,15 +644,13 @@
         .replace(/\\\//g, '/');
 
       const candidates = [];
-
-      // Prefer explicit canonical metadata.
       const metaPatterns = [
         /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/gi,
         /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:url["']/gi,
         /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/gi,
         /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/gi,
-        /<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\\d+;\\s*url=([^"'>\\s]+)/gi,
-        /window\\.location\\.(?:href|replace)\\s*=\\s*["']([^"']+)["']/gi
+        /<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/gi,
+        /window\.location\.(?:href|replace)\s*=\s*["']([^"']+)["']/gi
       ];
 
       for (const pattern of metaPatterns) {
@@ -658,8 +658,9 @@
         while ((match = pattern.exec(decodedHtml)) !== null) candidates.push(match[1]);
       }
 
-      // Fall back to URLs embedded in page state, but only real note paths.
-      const embedded = decodedHtml.match(/https?:\\/\\/(?:www\\.)?xiaohongshu\\.com\\/(?:explore|discovery\\/item)\\/[a-zA-Z0-9]+[^\\s"'<>]*/gi) || [];
+      const embedded = decodedHtml.match(
+        /https?:\/\/(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/[a-zA-Z0-9]+[^\s"'<>]*/gi
+      ) || [];
       candidates.push(...embedded);
 
       return candidates.find(isValidXhsContentUrl) || null;

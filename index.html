@@ -553,12 +553,57 @@
     async function resolveShortLink(shortUrl) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
       try {
+        // Primary resolver: purpose-built redirect API with browser CORS support.
+        const redirectResponse = await fetch('https://www.redirectcheck.org/api/check', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: shortUrl,
+            method: 'GET',
+            followMetaRefresh: true
+          })
+        });
+
+        if (redirectResponse.ok) {
+          const data = await redirectResponse.json();
+          const candidates = [
+            data?.final_result?.final_url,
+            data?.final_url,
+            ...(data?.redirects || []).flatMap(item => [
+              item?.url,
+              item?.location,
+              item?.redirect_url
+            ])
+          ].filter(Boolean);
+
+          const resolved = candidates.reverse().find(isValidXhsContentUrl);
+          if (resolved) {
+            clearTimeout(timeoutId);
+            return { success: true, url: resolved };
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          clearTimeout(timeoutId);
+          return { success: false, url: shortUrl, reason: 'timeout' };
+        }
+        // Continue to the compatibility fallback below.
+      }
+
+      try {
+        // Compatibility fallback for cases the redirect API cannot reach.
         const proxyUrl = PROXY_URL + encodeURIComponent(shortUrl);
-        const response = await fetch(proxyUrl, { method: 'GET', signal: controller.signal, redirect: 'follow' });
+        const response = await fetch(proxyUrl, {
+          method: 'GET',
+          signal: controller.signal,
+          redirect: 'follow'
+        });
+
         clearTimeout(timeoutId);
         if (response.ok) {
-          // CorsProxy exposes the real destination after redirects in this header.
           const finalUrl = response.headers.get('x-final-url');
           if (isValidXhsContentUrl(finalUrl)) return { success: true, url: finalUrl };
 
@@ -566,6 +611,7 @@
           const resolved = parseRedirectFromHtml(text);
           if (resolved) return { success: true, url: resolved };
         }
+
         return { success: false, url: shortUrl, reason: 'shortlink_parse_failed' };
       } catch (error) {
         clearTimeout(timeoutId);
